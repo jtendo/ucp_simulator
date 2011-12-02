@@ -1,3 +1,4 @@
+%% ex: ts=4 sw=4 et
 {application, ucp_simulator,
  [
   {description, "UCP protocol simulator"},
@@ -7,6 +8,9 @@
                   kernel,
                   stdlib
                  ]},
-  {mod, { ucp_simulator_app, []}},
-  {env, []}
+  {mod, {ucp_simulator_app, []}},
+  {env, [
+            %% listening TCP port (default: 7777)
+            {listen_port, 7777}
+        ]}
  ]}.
