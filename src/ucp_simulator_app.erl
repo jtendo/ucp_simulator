@@ -3,7 +3,7 @@
 -behaviour(application).
 
 %% Application callbacks
--export([start/0, start/2, stop/1]).
+-export([start/2, stop/1]).
 
 -define(DEFAULT_PORT, 7777).
 -define(TCP_OPTIONS, [binary,
@@ -15,10 +15,6 @@
 %% ===================================================================
 %% Application callbacks
 %% ===================================================================
-
-% For application start from console
-start() ->
-    application:start(ucp_simulator).
 
 start(_StartType, _StartArgs) ->
     Port = get_app_env(listen_port, ?DEFAULT_PORT),
