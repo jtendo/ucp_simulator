@@ -1,0 +1,12 @@
+{application, ucp_simulator,
+ [
+  {description, "UCP protocol simulator"},
+  {vsn, "1.0"},
+  {registered, []},
+  {applications, [
+                  kernel,
+                  stdlib
+                 ]},
+  {mod, { ucp_simulator_app, []}},
+  {env, []}
+ ]}.
