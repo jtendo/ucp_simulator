@@ -4,20 +4,17 @@
 
 -include("ucp_syntax.hrl").
 
--export([
-         to_ira/1,
+-export([to_ira/1,
          from_ira/1,
          to_7bit/1,
-         calculate_sender/1,
+         encode_sender/1,
+         decode_sender/2,
          compose_message/2,
-         binary_split/2,
-         pad_to/2,
          get_next_trn/1,
          trn_to_str/1,
          decode_message/1,
          wrap/1,
-         create_cmd_52/3
-        ]).
+         create_cmd_52/3]).
 
 -define(STX, 16#02).
 -define(ETX, 16#03).
@@ -28,14 +25,10 @@
 -define(UCP_SEPARATOR, $/).
 
 %%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Function for converting string to string
-%% encoded into IRA, after GSM 03.38 Version 5.3.0
-%%
-%% @spec to_ira(Str) -> String
-%% @end
+%% Convert string to string encoded into IRA,
+%% after GSM 03.38 Version 5.3.0
 %%--------------------------------------------------------------------
+-spec to_ira(iolist()) -> iolist().
 to_ira(Str) ->
     GsmMessage = lists:map(fun(X) -> ucp_ia5:ascii_to_gsm(X) end, Str),
     lists:flatten(GsmMessage).
@@ -45,40 +38,45 @@ from_ira(Str) ->
     lists:flatten(ASCIMessage).
 
 %%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Function for converting string to 7-bit encoding according to:
-%% GSM 03.38 Version 5.3.0
-%%
-%% @spec to_7bit(String) -> String
-%% @end
+%% Convert string to 7-bit encoding
+%% according to: GSM 03.38 Version 5.3.0
 %%--------------------------------------------------------------------
 to_7bit(Str) -> binary:bin_to_list(ucp_7bit:to_7bit(Str)).
 
 %%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Function for calculating UCP OAdC field for string and returns list
-%% of Hex octets
-%%
-%% @spec calculate_sender(String) -> {otoa, OTOA, sender, SENDER }
-%% @end
+%% Calculate UCP OAdC field
 %%--------------------------------------------------------------------
-calculate_sender(Sender) ->
+encode_sender(Sender) ->
+    % TODO: detect international numer and set OTOA: 1139
     case has_only_digits(Sender) of
         true ->
-            {otoa, "1139", sender, Sender};
+            {"", Sender};
         false ->
-            {otoa, "5039", sender, append_length(hex:to_hexstr(to_7bit(to_ira(Sender))))}
+            {"5039", append_length(
+                        hex:to_hexstr(
+                           to_7bit(
+                              to_ira(Sender))))}
+    end.
+
+decode_sender(OTOA, OAdC) ->
+    case OTOA of
+        "5039" ->
+           % Cut off sender length
+           from_ira(
+              ucp_7bit:from_7bit(
+                 hex:hexstr_to_list(
+                    string:substr(OAdC, 3))));
+        _Other ->
+           OAdC
     end.
 
 %%--------------------------------------------------------------------
-%% Function for composing whole ucp message
+%% Compose whole UCP message
 %%--------------------------------------------------------------------
 compose_message(Header, Body) ->
     HF = lists:nthtail(1, tuple_to_list(Header)),
     BF = lists:nthtail(1, tuple_to_list(Body)),
-    Len = length(string:join(lists:concat([HF, BF]), "/")) + 3, % 3 = delimiter and CRC
+    Len = length(string:join(lists:concat([HF, BF]), "/")) + 3, % 3: for delimiter and CRC
     LenS = string:right(integer_to_list(Len, 10), 5, $0),
     % Update header with proper len value
     NewHeader = Header#ucp_header{len = LenS},
@@ -89,7 +87,7 @@ compose_message(Header, Body) ->
     string:concat(Message, CRC).
 
 %%--------------------------------------------------------------------
-%% Function for appending list length to begining of the list
+%% Append list length to begining of the list
 %%--------------------------------------------------------------------
 append_length(L) ->
     Fun = fun([H|_]) -> H == $0 end,
@@ -97,72 +95,38 @@ append_length(L) ->
     Len = length(ElemsWithOutZero)*2
         + length(ElemsWithZero),
     HexStr = hex:to_hexstr(Len),
-    lists:append(HexStr, L).
+    lists:flatten([HexStr, L]).
 
 %%--------------------------------------------------------------------
-%% Function for getting 8 last significant bits of number
+%% Get 8 last significant bits of number
 %%--------------------------------------------------------------------
 get_8lsb(Integer) ->
     Integer band 255.
 
 %%--------------------------------------------------------------------
-%% Function for calculating CRC checksum for UCP Message
+%% Calculate CRC checksum for UCP Message
 %%--------------------------------------------------------------------
-calculate_crc(Data) when is_binary(Data) ->
-    calculate_crc(hex:to_hexstr(Data));
-
 calculate_crc(Data) when is_list(Data) ->
-    hex:to_hexstr(get_8lsb(lists:sum(Data))).
+    string:right(integer_to_list(get_8lsb(lists:sum(Data)), 16), 2, $0).
 
 %%--------------------------------------------------------------------
-%% Function for checking if Char is digit
+%% Checks if char is digit
 %%--------------------------------------------------------------------
 is_digit(C) when C > 46, C < 58  -> true;
 is_digit(_) -> false.
 
 %%--------------------------------------------------------------------
-%% Function for checking if String contains only digits
+%% Check if string contains only digits
 %%--------------------------------------------------------------------
 has_only_digits(Str) ->
     lists:all(fun(Elem) -> is_digit(Elem) end, Str).
 
 %%--------------------------------------------------------------------
-%% Function for spliting binary into chunks
-%%--------------------------------------------------------------------
-binary_split(Bin, Size) ->
-    case size(Bin) =< Size of
-        true ->
-            [Bin];
-        false ->
-            binary_split(Bin, Size, 0, [])
-    end.
-
-binary_split(<<>>, _, _, Acc)->
-    lists:reverse(Acc);
-
-binary_split(Bin, Size, ChunkNo, Acc)->
-    ToProcess = size(Bin) - length(Acc)*Size,
-    case ToProcess =< Size of
-        true ->
-            binary_split(<<>>, Size, ChunkNo+1,
-                         [binary:part(Bin, ChunkNo*Size, ToProcess)|Acc]);
-        false ->
-            binary_split(Bin, Size, ChunkNo+1,
-                         [binary:part(Bin, ChunkNo*Size, Size)|Acc])
-    end.
-
-pad_to(Width, Binary) ->
-     case (Width - size(Binary) rem Width) rem Width
-       of 0 -> Binary
-        ; N -> <<Binary/binary, 0:(N*8)>>
-     end.
-
-%%--------------------------------------------------------------------
-%% Increase with rotate TRN number
+%% Increase and rotate TRN number
 %%--------------------------------------------------------------------
 get_next_trn(Val) when is_list(Val) ->
     get_next_trn(list_to_integer(Val));
-get_next_trn(Val) when is_integer(Val) andalso Val > ?MAX_MESSAGE_TRN ->
+get_next_trn(Val) when is_integer(Val) andalso Val >= ?MAX_MESSAGE_TRN ->
     ?MIN_MESSAGE_TRN;
 get_next_trn(Val) when is_integer(Val) ->
     Val + 1.
@@ -174,7 +138,7 @@ trn_to_str(Val) when is_integer(Val) ->
     string:right(integer_to_list(Val, 10), 2, $0).
 
 %%--------------------------------------------------------------------
-%% UCP message decoder
+%% Decode binary into UCP message
 %%--------------------------------------------------------------------
 decode_message(Msg = <<?STX, BinHeader:?UCP_HEADER_LEN/binary, _/binary>>) ->
     Len = size(Msg) - 2,
@@ -203,7 +167,6 @@ decode_message(Msg = <<?STX, BinHeader:?UCP_HEADER_LEN/binary, _/binary>>) ->
 
 decode_message(_) ->
     {error, invalid_message}.
-
 
 %%--------------------------------------------------------------------
 %% Parse UCP operations
@@ -293,10 +256,16 @@ parse_body(Header = #ucp_header{ot = OT, o_r = "R"}, Data) ->
 parse_body(_Header, _Body) ->
     {error, unsupported_operation}.
 
+%%--------------------------------------------------------------------
+%% Wrap message into delimiters
+%%--------------------------------------------------------------------
 wrap(Message) ->
     binary:list_to_bin([?STX, Message, ?ETX]).
 
-create_cmd_52(Sender, Receiver, Message) ->
+%%--------------------------------------------------------------------
+%% Create delivery text short message notification
+%%--------------------------------------------------------------------
+create_cmd_52(Sender, Receiver, Message) when is_list(Message) ->
     PMsg = hex:to_hexstr(ucp_utils:to_ira(Message)),
     {otoa, OTOA, sender, UCPSender} = ucp_utils:calculate_sender(Sender),
     Body = #ucp_cmd_5x{
