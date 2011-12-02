@@ -142,7 +142,8 @@ trn_to_str(Val) when is_integer(Val) ->
 %%--------------------------------------------------------------------
 decode_message(Msg = <<?STX, BinHeader:?UCP_HEADER_LEN/binary, _/binary>>) ->
     Len = size(Msg) - 2,
-    <<?STX, _MsgS:Len/binary, ?ETX, Rest/binary>> = Msg,
+    <<?STX, MsgS:Len/binary, ?ETX, Rest/binary>> = Msg,
+    io:format("Received UCP message: ~s~n", [binary:bin_to_list(MsgS)]),
     % TODO: handle rest of the message
     case size(Rest) of
         0 ->
