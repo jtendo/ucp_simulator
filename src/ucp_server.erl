@@ -1,4 +1,5 @@
 -module(ucp_server).
+-author('andrzej.trawinski@jtendo.com').
 
 -behaviour(gen_server).
 
@@ -33,22 +34,9 @@
 %%% API
 %%%===================================================================
 
-%%--------------------------------------------------------------------
-%% @doc Starts the server.
-%%
-%% @spec start_link(Port::integer()) -> {ok, Pid}
-%% where
-%%  Pid = pid()
-%% @end
-%%--------------------------------------------------------------------
 start_link(LSock) ->
     gen_server:start_link(?MODULE, [LSock], []).
 
-%%--------------------------------------------------------------------
-%% @doc Stops the server.
-%% @spec stop() -> ok
-%% @end
-%%--------------------------------------------------------------------
 stop() ->
     gen_server:cast(?SERVER, stop).
 
@@ -59,17 +47,6 @@ send_message(Msg) ->
 %%% gen_server callbacks
 %%%===================================================================
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Initiates the server
-%%
-%% @spec init(Args) -> {ok, State} |
-%%                     {ok, State, Timeout} |
-%%                     ignore |
-%%                     {stop, Reason}
-%% @end
-%%--------------------------------------------------------------------
 init([LSock]) ->
     {ok, #state{lsock = LSock, trn = 0}, 0}.
 
@@ -77,23 +54,13 @@ handle_call(Msg, _From, State) ->
     io:format("Unknown call: ~p~n", [Msg]),
     {reply, {ok, Msg}, State}.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Handling cast messages
-%%
-%% @spec handle_cast(Msg, State) -> {noreply, State} |
-%%                                  {noreply, State, Timeout} |
-%%                                  {stop, Reason, State}
-%% @end
-%%--------------------------------------------------------------------
 handle_cast({send_message, Msg}, State) ->
     TRN = ucp_utils:get_next_trn(State),
     try
         {ok, {Header, Body}} = ucp_utils:create_cmd_52("123", "567", Msg),
         Reply = ucp_utils:compose_message(Header#ucp_header{trn = ucp_utils:trn_to_str(TRN)}, Body),
         io:format("Sending UCP message: ~p~n", [Reply]),
-        gen_tcp:send(State#state.sock, binary:list_to_bin([?STX, Reply, ?ETX]))
+        gen_tcp:send(State#state.sock, ucp_utils:wrap(Reply))
     catch
         Class:Reason ->
             io:format("Error: ~p:~p~nStack: ~p~n", [Class, Reason, erlang:get_stacktrace()])
@@ -103,16 +70,6 @@ handle_cast({send_message, Msg}, State) ->
 handle_cast(stop, State) ->
     {stop, normal, State}.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Handling all non call/cast messages
-%%
-%% @spec handle_info(Info, State) -> {noreply, State} |
-%%                                   {noreply, State, Timeout} |
-%%                                   {stop, Reason, State}
-%% @end
-%%--------------------------------------------------------------------
 handle_info({tcp, Socket, RawData}, State) ->
     handle_data(Socket, RawData),
     {noreply, State};
@@ -127,28 +84,9 @@ handle_info(Any, State) ->
     io:format("Unhandled message: ~p~n", [Any]),
     {noreply, State}.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% This function is called by a gen_server when it is about to
-%% terminate. It should be the opposite of Module:init/1 and do any
-%% necessary cleaning up. When it returns, the gen_server terminates
-%% with Reason. The return value is ignored.
-%%
-%% @spec terminate(Reason, State) -> void()
-%% @end
-%%--------------------------------------------------------------------
 terminate(_Reason, _State) ->
     ok.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Convert process state when code is changed
-%%
-%% @spec code_change(OldVsn, State, Extra) -> {ok, NewState}
-%% @end
-%%--------------------------------------------------------------------
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
@@ -162,7 +100,7 @@ handle_data(Socket, RawData) ->
             {reply, {Header, Body}} ->
                 Reply = ucp_utils:compose_message(Header, Body),
                 io:format("Sending UCP reply: ~p~n", [Reply]),
-                gen_tcp:send(Socket, binary:list_to_bin([?STX, Reply, ?ETX]));
+                gen_tcp:send(Socket, ucp_utils:wrap(Reply));
             noreply ->
                 ignore
         end
@@ -173,7 +111,7 @@ handle_data(Socket, RawData) ->
 
 handle_message(RawData) ->
     Result = ucp_utils:decode_message(RawData),
-    io:format("Parsing result: ~p~n", [Result]),
+    io:format("Parsed UCP message: ~p~n", [Result]),
     case Result of
         {ok, Message} ->
             process_message(Message);
@@ -188,13 +126,15 @@ process_message({Header = #ucp_header{ot = "60", o_r = "O"}, Body}) ->
     case Body#ucp_cmd_60.styp of
         "1" -> % Open session
             % Pass everyone
+            % TODO: implement authorization
             {reply, {Header#ucp_header{o_r = "R"}, #short_ack{}}};
         Type -> {error, operation_subtype_not_supported, Type}
     end;
 
 % Reply to other messages with ACK
 process_message({Header = #ucp_header{o_r = "O"} , _Body}) ->
-    timer:sleep(2000),
+    % slow down reply
+    timer:sleep(1000),
     {reply, {Header#ucp_header{o_r = "R"}, #short_ack{}}};
 
 process_message({#ucp_header{o_r = "R"} , _Body}) ->
