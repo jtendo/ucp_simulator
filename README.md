@@ -13,7 +13,7 @@ Usage
 -----
 
 ```erlang
-> make run
+   > make run
 ```
 
 Configuration
