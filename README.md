@@ -1,5 +1,5 @@
-EMI/UCP simulator - A hunky Erlang emulating UCP protocol server
-================================================================
+EMI/UCP simulator - A hunky Erlang emulating ERMES/UCP-based EMI protocol server
+================================================================================
 
 The simulator is an application for near-to-live testing of your EMI/UCP
 applications without need of access to real SMSC. The application behaves as
