@@ -1,20 +1,18 @@
 -module(ucp_utils).
 -author('rafal.galczynski@jtendo.com').
 -author('andrzej.trawinski@jtendo.com').
+-author('adam.rutkowski@jtendo.com').
 
 -include("ucp_syntax.hrl").
 
--export([to_ira/1,
-         from_ira/1,
-         to_7bit/1,
-         encode_sender/1,
-         decode_sender/2,
+-export([decode_sender/2,
          compose_message/2,
-         get_next_trn/1,
-         trn_to_str/1,
          decode_message/1,
-         wrap/1,
-         create_cmd_52/3]).
+         wrap/1]).
+
+-export([to_hexstr/1,
+         hexstr_to_bin/1,
+         hexstr_to_list/1]).
 
 -define(STX, 16#02).
 -define(ETX, 16#03).
@@ -25,39 +23,15 @@
 -define(UCP_SEPARATOR, $/).
 
 %%--------------------------------------------------------------------
-%% Convert string to string encoded into IRA,
-%% after GSM 03.38 Version 5.3.0
+%% Convert string encoded in IRA into ASCII,
 %%--------------------------------------------------------------------
--spec to_ira(iolist()) -> iolist().
-to_ira(Str) ->
-    GsmMessage = lists:map(fun(X) -> ucp_ia5:ascii_to_gsm(X) end, Str),
-    lists:flatten(GsmMessage).
-
 from_ira(Str) ->
     ASCIMessage = lists:map(fun(X) -> ucp_ia5:gsm_to_ascii(X) end, Str),
     lists:flatten(ASCIMessage).
 
 %%--------------------------------------------------------------------
-%% Convert string to 7-bit encoding
-%% according to: GSM 03.38 Version 5.3.0
+%% Decode UCP OAdC field
 %%--------------------------------------------------------------------
-to_7bit(Str) -> binary:bin_to_list(ucp_7bit:to_7bit(Str)).
-
-%%--------------------------------------------------------------------
-%% Calculate UCP OAdC field
-%%--------------------------------------------------------------------
-encode_sender(Sender) ->
-    % TODO: detect international numer and set OTOA: 1139
-    case has_only_digits(Sender) of
-        true ->
-            {"", Sender};
-        false ->
-            {"5039", append_length(
-                        hex:to_hexstr(
-                           to_7bit(
-                              to_ira(Sender))))}
-    end.
-
 decode_sender(OTOA, OAdC) ->
     case OTOA of
         "5039" ->
@@ -87,17 +61,6 @@ compose_message(Header, Body) ->
     string:concat(Message, CRC).
 
 %%--------------------------------------------------------------------
-%% Append list length to begining of the list
-%%--------------------------------------------------------------------
-append_length(L) ->
-    Fun = fun([H|_]) -> H == $0 end,
-    {ElemsWithZero, ElemsWithOutZero} = lists:partition(Fun, L),
-    Len = length(ElemsWithOutZero)*2
-        + length(ElemsWithZero),
-    HexStr = hex:to_hexstr(Len),
-    lists:flatten([HexStr, L]).
-
-%%--------------------------------------------------------------------
 %% Get 8 last significant bits of number
 %%--------------------------------------------------------------------
 get_8lsb(Integer) ->
@@ -108,34 +71,6 @@ get_8lsb(Integer) ->
 %%--------------------------------------------------------------------
 calculate_crc(Data) when is_list(Data) ->
     string:right(integer_to_list(get_8lsb(lists:sum(Data)), 16), 2, $0).
-
-%%--------------------------------------------------------------------
-%% Checks if char is digit
-%%--------------------------------------------------------------------
-is_digit(C) when C > 46, C < 58  -> true;
-is_digit(_) -> false.
-
-%%--------------------------------------------------------------------
-%% Check if string contains only digits
-%%--------------------------------------------------------------------
-has_only_digits(Str) ->
-    lists:all(fun(Elem) -> is_digit(Elem) end, Str).
-
-%%--------------------------------------------------------------------
-%% Increase and rotate TRN number
-%%--------------------------------------------------------------------
-get_next_trn(Val) when is_list(Val) ->
-    get_next_trn(list_to_integer(Val));
-get_next_trn(Val) when is_integer(Val) andalso Val >= ?MAX_MESSAGE_TRN ->
-    ?MIN_MESSAGE_TRN;
-get_next_trn(Val) when is_integer(Val) ->
-    Val + 1.
-
-%%--------------------------------------------------------------------
-%% Right pad TRN number with zeros
-%%--------------------------------------------------------------------
-trn_to_str(Val) when is_integer(Val) ->
-    string:right(integer_to_list(Val, 10), 2, $0).
 
 %%--------------------------------------------------------------------
 %% Decode binary into UCP message
@@ -173,19 +108,19 @@ decode_message(_) ->
 %% Parse UCP operations
 %%--------------------------------------------------------------------
 parse_body(Header = #ucp_header{ot = OT, o_r = "O"}, Data) ->
-    case {OT, list_to_tuple(re:split(Data, "/", [{return, list}]))} of
-        {"31", {ADC, PID}} ->
+    case {OT, field_split(Data)} of
+        {"31", [ADC, PID]} ->
             Body = #ucp_cmd_31{adc = ADC, pid = PID},
             {ok, {Header, Body}};
         {"31", _} ->
-            {error, invalid_command_syntax};
-        {"60", {OADC, OTON, ONPI, STYP, PWD, NPWD, VERS, LADC, LTON, LNPI, OPID, RES1}} ->
+            {error, {syntax_error, Header}};
+        {"60", [OADC, OTON, ONPI, STYP, PWD, NPWD, VERS, LADC, LTON, LNPI, OPID, RES1]} ->
             Body = #ucp_cmd_60{ oadc = OADC,
                            oton = OTON,
                            onpi = ONPI,
                            styp = STYP,
-                           pwd = from_ira(PWD),
-                           npwd = from_ira(NPWD),
+                           pwd = ucp_ira:to(ascii, PWD),
+                           npwd = ucp_ira:to(ascii, NPWD),
                            vers = VERS,
                            ladc = LADC,
                            lton = LTON,
@@ -194,11 +129,11 @@ parse_body(Header = #ucp_header{ot = OT, o_r = "O"}, Data) ->
                            res1 = RES1 },
             {ok, {Header, Body}};
         {"60", _} ->
-            {error, invalid_command_syntax};
-        {"51", {ADC, OADC, AC, NRQ, NADC, NT, NPID,
+            {error, {syntax_error, Header}};
+        {"51", [ADC, OADC, AC, NRQ, NADC, NT, NPID,
              LRQ, LRAD, LPID, DD, DDT, VP, RPID, SCTS, DST, RSN, DSCTS,
              MT, NB, MSG, MMS, PR, DCS, MCLS, RPI, CPG, RPLY, OTOA, HPLMN,
-             XSER, RES4, RES5}} ->
+             XSER, RES4, RES5]} ->
              Body = #ucp_cmd_5x{adc=ADC, oadc=OADC, ac=AC, nrq=NRQ, nadc=NADC,
                           nt=NT, npid=NPID, lrq=LRQ, lrad=LRAD, lpid=LPID,
                           dd=DD, ddt=DDT, vp=VP, rpid=RPID, scts=SCTS,
@@ -207,10 +142,12 @@ parse_body(Header = #ucp_header{ot = OT, o_r = "O"}, Data) ->
                           rpi=RPI, cpg=CPG, rply=RPLY, otoa=OTOA, hplmn=HPLMN,
                           xser=XSER, res4=RES4, res5=RES5},
             {ok, {Header, Body}};
-        {"52", {ADC, OADC, AC, NRQ, NADC, NT, NPID,
+        {"51", _} ->
+            {error, {syntax_error, Header}};
+        {"52", [ADC, OADC, AC, NRQ, NADC, NT, NPID,
              LRQ, LRAD, LPID, DD, DDT, VP, RPID, SCTS, DST, RSN, DSCTS,
              MT, NB, MSG, MMS, PR, DCS, MCLS, RPI, CPG, RPLY, OTOA, HPLMN,
-             XSER, RES4, RES5}} ->
+             XSER, RES4, RES5]} ->
              Body = #ucp_cmd_5x{adc=ADC, oadc=OADC, ac=AC, nrq=NRQ, nadc=NADC,
                           nt=NT, npid=NPID, lrq=LRQ, lrad=LRAD, lpid=LPID,
                           dd=DD, ddt=DDT, vp=VP, rpid=RPID, scts=SCTS,
@@ -219,10 +156,12 @@ parse_body(Header = #ucp_header{ot = OT, o_r = "O"}, Data) ->
                           rpi=RPI, cpg=CPG, rply=RPLY, otoa=OTOA, hplmn=HPLMN,
                           xser=XSER, res4=RES4, res5=RES5},
             {ok, {Header, Body}};
-        {"53", {ADC, OADC, AC, NRQ, NADC, NT, NPID,
+        {"52", _} ->
+            {error, {syntax_error, Header}};
+        {"53", [ADC, OADC, AC, NRQ, NADC, NT, NPID,
              LRQ, LRAD, LPID, DD, DDT, VP, RPID, SCTS, DST, RSN, DSCTS,
              MT, NB, MSG, MMS, PR, DCS, MCLS, RPI, CPG, RPLY, OTOA, HPLMN,
-             XSER, RES4, RES5}} ->
+             XSER, RES4, RES5]} ->
              Body = #ucp_cmd_5x{adc=ADC, oadc=OADC, ac=AC, nrq=NRQ, nadc=NADC,
                           nt=NT, npid=NPID, lrq=LRQ, lrad=LRAD, lpid=LPID,
                           dd=DD, ddt=DDT, vp=VP, rpid=RPID, scts=SCTS,
@@ -231,8 +170,10 @@ parse_body(Header = #ucp_header{ot = OT, o_r = "O"}, Data) ->
                           rpi=RPI, cpg=CPG, rply=RPLY, otoa=OTOA, hplmn=HPLMN,
                           xser=XSER, res4=RES4, res5=RES5},
             {ok, {Header, Body}};
+        {"53", _} ->
+            {error, {syntax_error, Header}};
         _ ->
-            {error, unsupported_operation}
+            {error, {unsupported_operation, Header}}
     end;
 
 
@@ -240,14 +181,14 @@ parse_body(Header = #ucp_header{ot = OT, o_r = "O"}, Data) ->
 %% Parse result messages
 %%--------------------------------------------------------------------
 parse_body(Header = #ucp_header{ot = OT, o_r = "R"}, Data) ->
-    case {OT, list_to_tuple(re:split(Data, "/", [{return, list}]))} of
-        {_OT, {"A", SM}} -> % OT: 31, 60
+    case {OT, field_split(Data)} of
+        {_OT, ["A", SM]} -> % OT: 31, 60
             Body = #ack{sm = SM},
             {ok, {Header, Body}};
-        {_OT, {"A", MVP, SM}} -> % OT: 51
+        {_OT, ["A", MVP, SM]} -> % OT: 51
             Body = #ack{sm = SM, mvp = MVP},
             {ok, {Header, Body}};
-        {_OT, {"N", EC, SM}} -> % OT: 31, 51, 60
+        {_OT, ["N", EC, SM]} -> % OT: 31, 51, 60
             Body = #nack{ec = EC, sm = SM},
             {ok, {Header, Body}};
         _ ->
@@ -258,25 +199,47 @@ parse_body(_Header, _Body) ->
     {error, unsupported_operation}.
 
 %%--------------------------------------------------------------------
-%% Wrap message into delimiters
+%% Utility functions
 %%--------------------------------------------------------------------
+
 wrap(Message) ->
     binary:list_to_bin([?STX, Message, ?ETX]).
 
-%%--------------------------------------------------------------------
-%% Create delivery text short message notification
-%%--------------------------------------------------------------------
-create_cmd_52(Sender, Receiver, Message) when is_list(Message) ->
-    PMsg = hex:to_hexstr(ucp_utils:to_ira(Message)),
-    {otoa, OTOA, sender, UCPSender} = ucp_utils:calculate_sender(Sender),
-    Body = #ucp_cmd_5x{
-              oadc = UCPSender,
-              adc = Receiver,
-              otoa = OTOA,
-              mt = "3",
-              msg = PMsg},
-    Header = #ucp_header{
-              o_r = "O",
-              ot = "52"},
-    {ok, {Header, Body}}.
+field_split(L) ->
+    re:split(L, [?UCP_SEPARATOR], [{return,list}]).
 
+%%--------------------------------------------------------------------
+%% Hex mangling utils
+%%--------------------------------------------------------------------
+
+to_hexstr(Bin) when is_binary(Bin) ->
+    to_hexstr(binary_to_list(Bin));
+
+to_hexstr(Int) when is_integer(Int) andalso Int > 255 ->
+    to_hexstr(unicode, Int);
+
+to_hexstr(Int) when is_integer(Int) ->
+    to_hexstr(ascii, Int);
+
+to_hexstr(L) when is_list(L) ->
+    Type = case lists:any(fun(X) when X > 255 ->
+                    true;
+                   (_) ->
+                    false
+                   end, L) of
+              true -> unicode;
+              false -> ascii
+          end,
+    lists:flatten([to_hexstr(Type, X) || X <- L]).
+
+hexstr_to_bin(H) ->
+    <<<<(erlang:list_to_integer([X], 16)):4>> || X <- H>>.
+
+hexstr_to_list(H) ->
+    binary_to_list(hexstr_to_bin(H)).
+
+to_hexstr(ascii, Int) when is_integer(Int) ->
+    string:right(integer_to_list(Int, 16), 2, $0);
+
+to_hexstr(unicode, Int) when is_integer(Int) ->
+    string:right(integer_to_list(Int, 16), 4, $0).

@@ -17,6 +17,7 @@
          send_message/1]).
 
 -include("ucp_syntax.hrl").
+-include("logger.hrl").
 
 -ifdef(TEST).
 -compile([export_all]).
@@ -50,22 +51,13 @@ send_message(Msg) ->
 init([LSock]) ->
     {ok, #state{lsock = LSock, trn = 0}, 0}.
 
-handle_call(Msg, _From, State) ->
-    io:format("Unknown call: ~p~n", [Msg]),
+handle_call(Msg, From, State) ->
+    ?SYS_WARN("Unknown call from (~p): ~p", [From, Msg]),
     {reply, {ok, Msg}, State}.
 
-handle_cast({send_message, Msg}, State) ->
-    TRN = ucp_utils:get_next_trn(State),
-    try
-        {ok, {Header, Body}} = ucp_utils:create_cmd_52("123", "567", Msg),
-        Reply = ucp_utils:compose_message(Header#ucp_header{trn = ucp_utils:trn_to_str(TRN)}, Body),
-        io:format("Sending UCP message: ~p~n", [Reply]),
-        gen_tcp:send(State#state.sock, ucp_utils:wrap(Reply))
-    catch
-        Class:Reason ->
-            io:format("Error: ~p:~p~nStack: ~p~n", [Class, Reason, erlang:get_stacktrace()])
-    end,
-    {noreply, State#state{trn = TRN}};
+handle_cast({send_message, _Msg}, State) ->
+    % TODO: implement this
+    {noreply, State};
 
 handle_cast(stop, State) ->
     {stop, normal, State}.
@@ -74,14 +66,14 @@ handle_info({tcp, Socket, RawData}, State) ->
     handle_data(Socket, RawData),
     {noreply, State};
 handle_info({tcp_closed, _Socket}, State) ->
-    io:format("Connection closed by peer.~n"),
+    ?SYS_INFO("Connection closed by peer.", []),
     {stop, normal, State};
 handle_info(timeout, #state{lsock = LSock} = State) ->
     {ok, Sock} = gen_tcp:accept(LSock),
     ucp_simulator_sup:start_child(),
     {noreply, State#state{sock = Sock}};
 handle_info(Any, State) ->
-    io:format("Unhandled message: ~p~n", [Any]),
+    ?SYS_INFO("Unhandled message: ~p", [Any]),
     {noreply, State}.
 
 terminate(_Reason, _State) ->
@@ -99,28 +91,46 @@ handle_data(Socket, RawData) ->
         case handle_message(RawData) of
             {reply, {Header, Body}} ->
                 Reply = ucp_utils:compose_message(Header, Body),
-                io:format("Sending UCP reply: ~p~n", [Reply]),
+                ?SYS_INFO("Sending UCP reply: ~p", [Reply]),
                 gen_tcp:send(Socket, ucp_utils:wrap(Reply));
             noreply ->
                 ignore
         end
     catch
         _:_ ->
-            io:format("Error: ~p~n", [erlang:get_stacktrace()])
+            ?SYS_ERROR("Error: ~p", [erlang:get_stacktrace()])
     end.
 
 handle_message(RawData) ->
     Result = ucp_utils:decode_message(RawData),
-    io:format("Parsed UCP message: ~p~n", [Result]),
+    ?SYS_INFO("Parsed UCP message: ~p", [Result]),
     case Result of
         {ok, Message} ->
             process_message(Message);
-        _Error ->
-            {reply, {#ucp_header{ot = "31", o_r = "R"}, #nack{ec = "02"}}}
+        {error, {invalid_message_body, Header}} ->
+            ?SYS_INFO("Error parsing message: invalid body", []),
+            {reply, {Header#ucp_header{o_r = "R"}, #nack{ec = "02"}}};
+        {error, {unsupported_operation, Header}} ->
+            ?SYS_INFO("Error parsing message: unsupported operation", []),
+            {reply, {Header#ucp_header{o_r = "R"}, #nack{ec = "04"}}};
+        Error ->
+            ?SYS_INFO("Error handling message: ~p", [Error]),
+            noreply
     end.
 
 process_message({Header = #ucp_header{ot = "31", o_r = "O"}, _Body}) ->
     {reply, {Header#ucp_header{o_r = "R"}, #short_ack{sm = "0000"}}};
+
+process_message({Header = #ucp_header{ot = "51", o_r = "O"}, Body}) ->
+    case Body#ucp_cmd_5x.mt of
+        "3" ->
+            % print out text message
+            ?SYS_INFO("Text message: ~s", [ucp_utils:hexstr_to_list(Body#ucp_cmd_5x.msg)]);
+        _ -> ignore
+    end,
+    {{Year,Month,Day},{Hour,Min,Sec}} = calendar:now_to_datetime(erlang:now()),
+    SM = lists:flatten(io_lib:format("~s:~2B~2B~2B~2B~2B~2B", [Body#ucp_cmd_5x.adc, Day, Month, Year rem 100, Hour, Min, Sec])),
+    {reply, {Header#ucp_header{o_r = "R"}, #ack{sm = SM}}};
 
 process_message({Header = #ucp_header{ot = "60", o_r = "O"}, Body}) ->
     case Body#ucp_cmd_60.styp of

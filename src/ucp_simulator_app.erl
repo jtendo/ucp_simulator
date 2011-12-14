@@ -5,6 +5,8 @@
 %% Application callbacks
 -export([start/2, stop/1]).
 
+-include("logger.hrl").
+
 -define(DEFAULT_PORT, 7777).
 -define(TCP_OPTIONS, [binary,
                       {packet, 0},
@@ -19,7 +21,7 @@
 start(_StartType, _StartArgs) ->
     Port = get_app_env(listen_port, ?DEFAULT_PORT),
     {ok, LSock} = gen_tcp:listen(Port, ?TCP_OPTIONS),
-    io:format("UCP server listening on port: ~p~n", [Port]),
+    ?SYS_INFO("UCP server listening on port: ~p~n", [Port]),
     case ucp_simulator_sup:start_link(LSock) of
       {ok, Pid} ->
           ucp_simulator_sup:start_child(),

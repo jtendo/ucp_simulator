@@ -14,5 +14,6 @@ doc:
 
 run:
 	rebar clean compile
-	@erl -pa ebin -s ucp_simulator start
+	@erl -pa deps/*/ebin -pa ebin -s lager -s ucp_simulator start
+#	-pa deps/*/ebin -boot start_sasl
 
