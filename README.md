@@ -12,8 +12,16 @@ The simulator is based on LogicaCMG's EMI/UCP interface 4.6 specification.
 Usage
 -----
 
-```erlang
-   > make run
+1. Install
+
+```
+   make initenv
+```
+
+2. Run
+
+```
+   make run
 ```
 
 Configuration
@@ -21,8 +29,21 @@ Configuration
 
 - `listen_port`: the listening port (default: 7777)
 
+
+TODO
+----
+
+- TRN checking
+- Syntax checking
+- UCP windowing (flow control)
+- Concatenated messages checking
+- Sending messages from server to clients (CMD 52)
+- Delivery notifications
+- ...
+
+
 License
 -------
 
-The simulator is available under BSD licence (see `LICENSE`).
+BSD License -- http://www.opensource.org/licenses/bsd-license.php
 
