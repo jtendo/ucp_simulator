@@ -21,10 +21,6 @@ Configuration
 
 - `listen_port`: the listening port (default: 7777)
 
-Authors
--------
-...
-
 License
 -------
 
