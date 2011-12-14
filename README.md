@@ -9,6 +9,8 @@ only made-up by the simulator.
 
 The simulator is based on LogicaCMG's EMI/UCP interface 4.6 specification.
 
+If you like this project, you might also be interested in [jtendo UCP Gateway](https://github.com/jtendo/ucp_gateway)
+
 Usage
 -----
 
