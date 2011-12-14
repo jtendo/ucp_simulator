@@ -12,17 +12,17 @@ The simulator is based on LogicaCMG's EMI/UCP interface 4.6 specification.
 Usage
 -----
 
-1. Install
+1. Install:
 
-```
-   make initenv
-```
-
+    ```
+    $ make initenv
+    ```
+    
 2. Run
 
-```
-   make run
-```
+    ```
+    $ make initenv
+    ```
 
 Configuration
 -------------
