@@ -23,7 +23,7 @@ Usage
 2. Run
 
     ```
-    $ make initenv
+    $ make run
     ```
 
 Configuration
