@@ -1,24 +1,23 @@
-all: compile
+.PHONY: test deps
+
+REBAR=`which rebar || ./rebar`
+
+all: deps compile
+
+deps:
+	@$(REBAR) get-deps
 
 compile:
-	@rebar compile
+	@$(REBAR) compile
+
+test:
+	@$(REBAR) skip_deps=true eunit
 
 clean:
-	@rebar clean
+	@$(REBAR) clean
 
-test: compile
-	@rebar eunit
+clean-deps:
+	@$(REBAR) delete-deps
 
-doc:
-	rebar skip_deps=true doc
-
-initenv:
-	rebar clean
-	rebar delete-deps
-	rebar get-deps
-	rebar compile
-
-run:
-	rebar clean compile
-	@erl -pa deps/*/ebin -pa ebin -s lager -s ucp_simulator start
-
+run: all
+	erl -pa deps/*/ebin -pa ebin -s lager -s ucp_simulator start
