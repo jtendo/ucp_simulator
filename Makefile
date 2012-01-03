@@ -1,6 +1,6 @@
-.PHONY: test deps
+REBAR=`which rebar || echo ./rebar`
 
-REBAR=`which rebar || ./rebar`
+.PHONY: test deps
 
 all: deps compile
 
