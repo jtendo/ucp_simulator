@@ -16,12 +16,8 @@
          stop/0,
          send_message/1]).
 
--include("ucp_syntax.hrl").
+-include_lib("ucp_common/include/ucp_syntax.hrl").
 -include("logger.hrl").
-
--ifdef(TEST).
--compile([export_all]).
--endif.
 
 -define(SERVER, ?MODULE).
 
@@ -49,11 +45,17 @@ send_message(Msg) ->
 %%%===================================================================
 
 init([LSock]) ->
-    {ok, #state{lsock = LSock, trn = 0}, 0}.
+    ?SYS_INFO("Initializing UCP server~n", []),
+    gen_server:cast(self(), accept),
+    {ok, #state{lsock = LSock, trn = 0}}.
 
 handle_call(Msg, From, State) ->
     ?SYS_WARN("Unknown call from (~p): ~p", [From, Msg]),
     {reply, {ok, Msg}, State}.
+
+handle_cast(accept, State = #state{lsock = S}) ->
+    {ok, Sock} = gen_tcp:accept(S),
+    {noreply, State#state{sock = Sock}};
 
 handle_cast({send_message, _Msg}, State) ->
     % TODO: implement this
@@ -68,10 +70,10 @@ handle_info({tcp, Socket, RawData}, State) ->
 handle_info({tcp_closed, _Socket}, State) ->
     ?SYS_INFO("Connection closed by peer.", []),
     {stop, normal, State};
-handle_info(timeout, #state{lsock = LSock} = State) ->
-    {ok, Sock} = gen_tcp:accept(LSock),
-    ucp_simulator_sup:start_child(),
-    {noreply, State#state{sock = Sock}};
+%handle_info(timeout, #state{lsock = LSock} = State) ->
+    %{ok, Sock} = gen_tcp:accept(LSock),
+    %ucp_simulator_sup:start_child(),
+    %{noreply, State#state{sock = Sock}};
 handle_info(Any, State) ->
     ?SYS_INFO("Unhandled message: ~p", [Any]),
     {noreply, State}.
@@ -92,9 +94,9 @@ handle_data(Socket, RawData) ->
             {reply, {Header, Body}} ->
                 Reply = ucp_utils:compose_message(Header, Body),
                 ?SYS_INFO("Sending UCP reply: ~p", [Reply]),
-                gen_tcp:send(Socket, ucp_utils:wrap(Reply));
+                send(Socket, ucp_utils:wrap(Reply));
             noreply ->
-                ignore
+                send(Socket, <<"Error">>)
         end
     catch
         _:_ ->
@@ -150,3 +152,7 @@ process_message({Header = #ucp_header{o_r = "O"} , _Body}) ->
 process_message({#ucp_header{o_r = "R"} , _Body}) ->
     noreply.
 
+send(S, Msg) ->
+    ok = gen_tcp:send(S, Msg),
+    inet:setopts(S, [{active, once}]),
+    ok.
