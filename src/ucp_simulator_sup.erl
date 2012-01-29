@@ -1,34 +1,32 @@
 -module(ucp_simulator_sup).
-
 -behaviour(supervisor).
 
-%% API
--export([start_link/1, start_child/0]).
-
-%% Supervisor callbacks
+-export([start_link/0, start_child/0]).
 -export([init/1]).
 
-%% Helper macro for declaring children of supervisor
--define(CHILD(I, Type), {I, {I, start_link, []}, permanent, 5000, Type, [I]}).
--define(SERVER, ?MODULE).
+-define(DEFAULT_PORT, 7777).
+-define(TCP_OPTIONS, [binary,
+                      {packet, 0},
+                      {active, once},
+                      {reuseaddr, true}]).
 
-%% ===================================================================
-%% API functions
-%% ===================================================================
+start_link() ->
+    supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
-start_link(LSock) ->
-    supervisor:start_link({local, ?SERVER}, ?MODULE, [LSock]).
+init([]) ->
+    Port = get_app_env(listen_port, ?DEFAULT_PORT),
+    {ok, ListenSocket} = gen_tcp:listen(Port, ?TCP_OPTIONS),
+    {ok, {{simple_one_for_one, 10, 60},
+         [{ucp_server,
+          {ucp_server, start_link, [ListenSocket]},
+          temporary, 1000, worker, [ucp_server]}
+         ]}}.
 
 start_child() ->
-    supervisor:start_child(?SERVER, []).
+    supervisor:start_child(?MODULE, []).
 
-%% ===================================================================
-%% Supervisor callbacks
-%% ===================================================================
-
-init([LSock]) ->
-    Server = {ucp_server, {ucp_server, start_link, [LSock]},
-              temporary, brutal_kill, worker, [ucp_server]},
-    Children = [Server],
-    {ok, { {simple_one_for_one, 0, 1}, Children} }.
-
+get_app_env(Opt, Default) ->
+    case application:get_env(ucp_simulator, Opt) of
+        {ok, Val} -> Val;
+        _ -> Default
+    end.
