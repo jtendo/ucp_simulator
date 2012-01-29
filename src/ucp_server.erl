@@ -155,5 +155,4 @@ process_message({#ucp_header{o_r = "R"} , _Body}) ->
     noreply.
 
 send(S, Msg) ->
-    gen_tcp:send(S, Msg),
-    gen_server:cast(self(), accept).
+    gen_tcp:send(S, Msg).
