@@ -7,7 +7,7 @@
 -define(DEFAULT_PORT, 7777).
 -define(TCP_OPTIONS, [binary,
                       {packet, 0},
-                      {active, once},
+                      {active, false},
                       {reuseaddr, true}]).
 
 start_link() ->

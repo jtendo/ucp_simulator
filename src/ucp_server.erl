@@ -1,5 +1,6 @@
 -module(ucp_server).
 -author('andrzej.trawinski@jtendo.com').
+-author('adam.rutkowski@jtendo.com').
 
 -behaviour(gen_server).
 
@@ -55,6 +56,7 @@ handle_call(Msg, From, State) ->
 
 handle_cast(accept, State = #state{lsock = S}) ->
     {ok, Sock} = gen_tcp:accept(S),
+    loop(Sock),
     {noreply, State#state{sock = Sock}};
 
 handle_cast({send_message, _Msg}, State) ->
@@ -64,16 +66,7 @@ handle_cast({send_message, _Msg}, State) ->
 handle_cast(stop, State) ->
     {stop, normal, State}.
 
-handle_info({tcp, Socket, RawData}, State) ->
-    handle_data(Socket, RawData),
-    {noreply, State};
-handle_info({tcp_closed, _Socket}, State) ->
-    ?SYS_INFO("Connection closed by peer.", []),
-    {stop, normal, State};
-%handle_info(timeout, #state{lsock = LSock} = State) ->
-    %{ok, Sock} = gen_tcp:accept(LSock),
-    %ucp_simulator_sup:start_child(),
-    %{noreply, State#state{sock = Sock}};
+
 handle_info(Any, State) ->
     ?SYS_INFO("Unhandled message: ~p", [Any]),
     {noreply, State}.
@@ -88,6 +81,15 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 
+loop(Sock) ->
+    case ucp_framing:recv_ucp_sock(Sock) of
+        {ok, Data} ->
+            handle_data(Sock, Data);
+        Other ->
+            Other
+    end,
+    loop(Sock).
+
 handle_data(Socket, RawData) ->
     try
         case handle_message(RawData) of
@@ -95,8 +97,8 @@ handle_data(Socket, RawData) ->
                 Reply = ucp_utils:compose_message(Header, Body),
                 ?SYS_INFO("Sending UCP reply: ~p", [Reply]),
                 send(Socket, ucp_utils:wrap(Reply));
-            noreply ->
-                send(Socket, <<"Error">>)
+            _ ->
+                ignore
         end
     catch
         _:_ ->
@@ -153,6 +155,5 @@ process_message({#ucp_header{o_r = "R"} , _Body}) ->
     noreply.
 
 send(S, Msg) ->
-    ok = gen_tcp:send(S, Msg),
-    inet:setopts(S, [{active, once}]),
-    ok.
+    gen_tcp:send(S, Msg),
+    gen_server:cast(self(), accept).
