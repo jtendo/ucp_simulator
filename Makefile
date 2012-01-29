@@ -20,4 +20,4 @@ clean-deps:
 	@$(REBAR) delete-deps
 
 run: all
-	erl -pa deps/*/ebin -pa ebin -s lager -s ucp_simulator start
+	erl -pa deps/*/ebin -pa ebin -boot start_sasl -s lager -s ucp_simulator_app
