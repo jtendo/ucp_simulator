@@ -26,7 +26,9 @@
                 lsock, % listening socket
                 sock,  % socket
                 trn,   % message number
-                status}).
+                status,
+                buffer % TCP buffer
+            }).
 
 %%%===================================================================
 %%% API
@@ -56,7 +58,7 @@ handle_call(Msg, From, State) ->
 
 handle_cast(accept, State = #state{lsock = S}) ->
     {ok, Sock} = gen_tcp:accept(S),
-    loop(Sock),
+    ?SYS_INFO("Accepting: ~p", [Sock]),
     {noreply, State#state{sock = Sock}};
 
 handle_cast({send_message, _Msg}, State) ->
@@ -66,6 +68,17 @@ handle_cast({send_message, _Msg}, State) ->
 handle_cast(stop, State) ->
     {stop, normal, State}.
 
+handle_info({tcp, Socket, Data}, State = #state{buffer = B}) ->
+    {Messages, Incomplete} = ucp_framing:try_decode(Data, B),
+    [handle_data(Socket, M) || M <- Messages],
+    {noreply, State#state{
+            buffer = Incomplete
+        }};
+
+handle_info({tcp_closed, Socket}, State) ->
+    ?SYS_WARN("Socket ~p closed.", [Socket]),
+    ucp_simulator_sup:start_child(),
+    {noreply, State};
 
 handle_info(Any, State) ->
     ?SYS_INFO("Unhandled message: ~p", [Any]),
@@ -80,15 +93,6 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-
-loop(Sock) ->
-    case ucp_framing:recv_ucp_sock(Sock) of
-        {ok, Data} ->
-            handle_data(Sock, Data);
-        Other ->
-            Other
-    end,
-    loop(Sock).
 
 handle_data(Socket, RawData) ->
     try
@@ -155,4 +159,6 @@ process_message({#ucp_header{o_r = "R"} , _Body}) ->
     noreply.
 
 send(S, Msg) ->
-    gen_tcp:send(S, Msg).
+    gen_tcp:send(S, Msg),
+    inet:setopts(S, [{active, once}]).
+
